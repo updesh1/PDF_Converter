@@ -3,11 +3,12 @@ from PIL import Image
 from fpdf import FPDF
 from PyPDF2 import PdfReader, PdfWriter, PdfMerger
 from pdf2image import convert_from_bytes
-from docx import Document
 import fitz
 import os
 import zipfile
 import subprocess
+import time
+import shutil
 
 os.makedirs("output", exist_ok=True)
 
@@ -25,7 +26,7 @@ st.markdown("""
 
     .block-container {
         max-width: 1000px;
-        padding-top: 2rem;
+        padding-top: 1.5rem;
         padding-left: 1rem;
         padding-right: 1rem;
     }
@@ -86,6 +87,28 @@ st.markdown("""
         color: white;
     }
 
+    section[data-testid="stFileUploader"] {
+        width: 100%;
+    }
+
+    section[data-testid="stFileUploader"] label {
+        color: #f8fafc !important;
+    }
+
+    section[data-testid="stFileUploader"] button {
+        width: auto !important;
+        min-width: 120px;
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        padding: 16px !important;
+        min-height: 120px !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        background-color: #020617;
+    }
+
     .footer {
         text-align: center;
         margin-top: 40px;
@@ -97,10 +120,6 @@ st.markdown("""
     .footer span {
         font-weight: bold;
         color: #60a5fa;
-    }
-
-    section[data-testid="stSidebar"] {
-        background-color: #020617;
     }
 
     @media only screen and (max-width: 768px) {
@@ -120,8 +139,14 @@ st.markdown("""
             border-radius: 15px;
         }
 
-        .stFileUploader {
-            font-size: 14px;
+        [data-testid="stFileUploaderDropzone"] {
+            padding: 14px !important;
+            min-height: 110px !important;
+        }
+
+        section[data-testid="stFileUploader"] button {
+            width: 100% !important;
+            margin-top: 8px;
         }
 
         .stButton button,
@@ -150,9 +175,9 @@ st.sidebar.title("PDF Tools")
 option = st.sidebar.selectbox(
     "Choose Tool",
     [
+        "DOCX to PDF",
         "Image to PDF",
         "Text to PDF",
-        "DOCX to PDF",
         "PDF to Images",
         "Merge PDFs",
         "Split PDF",
@@ -170,17 +195,101 @@ def download_file(path, label, filename):
         st.download_button(label, file, file_name=filename)
 
 
+def show_progress(message="Processing"):
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+
+    for percent in range(0, 101, 10):
+        progress_text.write(f"{message}... {percent}%")
+        progress_bar.progress(percent)
+        time.sleep(0.08)
+
+    progress_text.empty()
+
+
+def get_libreoffice_path():
+    windows_path = r"C:\Program Files\LibreOffice\program\soffice.exe"
+
+    if os.path.exists(windows_path):
+        return windows_path
+
+    libreoffice_path = shutil.which("libreoffice")
+    if libreoffice_path:
+        return libreoffice_path
+
+    soffice_path = shutil.which("soffice")
+    if soffice_path:
+        return soffice_path
+
+    return None
+
+
 st.markdown('<div class="tool-box">', unsafe_allow_html=True)
 
-if option == "Image to PDF":
+
+if option == "DOCX to PDF":
+    st.subheader("DOCX to PDF")
+
+    file = st.file_uploader(
+        "Upload DOCX file",
+        type=["docx"],
+        key="docx_uploader"
+    )
+
+    if file is not None:
+        st.success(f"File uploaded: {file.name}")
+        st.write(f"File size: {round(file.size / 1024, 2)} KB")
+
+        if st.button("Convert DOCX to PDF"):
+            show_progress("Converting DOCX to PDF")
+
+            input_path = "output/input.docx"
+
+            with open(input_path, "wb") as f:
+                f.write(file.getbuffer())
+
+            libreoffice_path = get_libreoffice_path()
+
+            if libreoffice_path is None:
+                st.error("LibreOffice is not installed or not found.")
+                st.info("For local testing, install LibreOffice. For Render deployment, use Dockerfile with LibreOffice installed.")
+                st.stop()
+
+            command = [
+                libreoffice_path,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                "output",
+                input_path
+            ]
+
+            result = subprocess.run(command, capture_output=True, text=True)
+
+            output_path = "output/input.pdf"
+
+            if os.path.exists(output_path):
+                st.success("DOCX converted successfully")
+                download_file(output_path, "Download PDF", "converted_docx.pdf")
+            else:
+                st.error("Conversion failed")
+                st.write(result.stderr)
+
+
+elif option == "Image to PDF":
     st.subheader("Image to PDF")
+
     files = st.file_uploader(
         "Upload images",
         type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="image_uploader"
     )
 
     if files and st.button("Convert Images to PDF"):
+        show_progress("Converting Images to PDF")
+
         images = []
 
         for file in files:
@@ -196,83 +305,56 @@ if option == "Image to PDF":
 
 elif option == "Text to PDF":
     st.subheader("Text to PDF")
+
     text = st.text_area("Enter your text")
 
     if st.button("Convert Text to PDF"):
-        pdf = FPDF()
-        pdf.add_page()
-
-        font_path = "C:/Windows/Fonts/arial.ttf"
-
-        if os.path.exists(font_path):
-            pdf.add_font("ArialUnicode", "", font_path)
-            pdf.set_font("ArialUnicode", size=12)
+        if not text.strip():
+            st.error("Please enter some text")
         else:
-            pdf.set_font("Arial", size=12)
+            show_progress("Converting Text to PDF")
 
-        for line in text.split("\n"):
-            pdf.multi_cell(0, 8, line)
+            pdf = FPDF()
+            pdf.add_page()
 
-        output_path = "output/text_to_pdf.pdf"
-        pdf.output(output_path)
+            font_path = "C:/Windows/Fonts/arial.ttf"
 
-        st.success("Text converted to PDF")
-        download_file(output_path, "Download PDF", "text_to_pdf.pdf")
+            if os.path.exists(font_path):
+                pdf.add_font("ArialUnicode", "", font_path)
+                pdf.set_font("ArialUnicode", size=12)
+            else:
+                pdf.set_font("Arial", size=12)
 
+            for line in text.split("\n"):
+                pdf.multi_cell(0, 8, line)
 
-elif option == "DOCX to PDF":
-    st.subheader("DOCX to PDF")
-    file = st.file_uploader("Upload DOCX file", type=["docx"])
+            output_path = "output/text_to_pdf.pdf"
+            pdf.output(output_path)
 
-    if file and st.button("Convert DOCX to PDF"):
-        input_path = "output/input.docx"
-
-        with open(input_path, "wb") as f:
-            f.write(file.read())
-
-        windows_libreoffice = r"C:\Program Files\LibreOffice\program\soffice.exe"
-
-        if os.path.exists(windows_libreoffice):
-            libreoffice_path = windows_libreoffice
-        else:
-            libreoffice_path = "libreoffice"
-
-        command = [
-            libreoffice_path,
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            "output",
-            input_path
-        ]
-
-        result = subprocess.run(command, capture_output=True, text=True)
-
-        output_path = "output/input.pdf"
-
-        if os.path.exists(output_path):
-            st.success("DOCX converted to PDF with same layout")
-            download_file(output_path, "Download PDF", "converted_docx.pdf")
-        else:
-            st.error("Conversion failed")
-            st.write(result.stderr)
+            st.success("Text converted to PDF")
+            download_file(output_path, "Download PDF", "text_to_pdf.pdf")
 
 
 elif option == "PDF to Images":
     st.subheader("PDF to Images")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="pdf_to_images_uploader"
+    )
 
     if file and st.button("Convert PDF to Images"):
-        images = convert_from_bytes(file.read())
+        show_progress("Converting PDF to Images")
 
+        images = convert_from_bytes(file.read())
         zip_path = "output/pdf_images.zip"
 
         with zipfile.ZipFile(zip_path, "w") as zip_file:
             for i, image in enumerate(images):
                 img_path = f"output/page_{i + 1}.png"
                 image.save(img_path, "PNG")
-                zip_file.write(img_path)
+                zip_file.write(img_path, arcname=f"page_{i + 1}.png")
 
         st.success("PDF converted to images")
         download_file(zip_path, "Download Images ZIP", "pdf_images.zip")
@@ -280,34 +362,48 @@ elif option == "PDF to Images":
 
 elif option == "Merge PDFs":
     st.subheader("Merge PDFs")
+
     files = st.file_uploader(
         "Upload PDF files",
         type=["pdf"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="merge_pdf_uploader"
     )
 
     if files and st.button("Merge PDFs"):
-        merger = PdfMerger()
+        if len(files) < 2:
+            st.error("Please upload at least 2 PDF files")
+        else:
+            show_progress("Merging PDFs")
 
-        for file in files:
-            merger.append(file)
+            merger = PdfMerger()
 
-        output_path = "output/merged.pdf"
-        merger.write(output_path)
-        merger.close()
+            for file in files:
+                merger.append(file)
 
-        st.success("PDFs merged successfully")
-        download_file(output_path, "Download Merged PDF", "merged.pdf")
+            output_path = "output/merged.pdf"
+            merger.write(output_path)
+            merger.close()
+
+            st.success("PDFs merged successfully")
+            download_file(output_path, "Download Merged PDF", "merged.pdf")
 
 
 elif option == "Split PDF":
     st.subheader("Split PDF")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="split_pdf_uploader"
+    )
 
     start_page = st.number_input("Start page", min_value=1, step=1)
     end_page = st.number_input("End page", min_value=1, step=1)
 
     if file and st.button("Split PDF"):
+        show_progress("Splitting PDF")
+
         reader = PdfReader(file)
         writer = PdfWriter()
 
@@ -332,12 +428,19 @@ elif option == "Split PDF":
 
 elif option == "Compress PDF":
     st.subheader("Compress PDF")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="compress_pdf_uploader"
+    )
 
     if file and st.button("Compress PDF"):
-        input_bytes = file.read()
+        show_progress("Compressing PDF")
 
+        input_bytes = file.read()
         doc = fitz.open(stream=input_bytes, filetype="pdf")
+
         output_path = "output/compressed.pdf"
 
         doc.save(
@@ -346,6 +449,7 @@ elif option == "Compress PDF":
             deflate=True,
             clean=True
         )
+
         doc.close()
 
         st.success("PDF compressed")
@@ -354,10 +458,18 @@ elif option == "Compress PDF":
 
 elif option == "Rotate PDF":
     st.subheader("Rotate PDF")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="rotate_pdf_uploader"
+    )
+
     angle = st.selectbox("Select rotation angle", [90, 180, 270])
 
     if file and st.button("Rotate PDF"):
+        show_progress("Rotating PDF")
+
         reader = PdfReader(file)
         writer = PdfWriter()
 
@@ -376,10 +488,18 @@ elif option == "Rotate PDF":
 
 elif option == "Password Protect PDF":
     st.subheader("Password Protect PDF")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="protect_pdf_uploader"
+    )
+
     password = st.text_input("Enter password", type="password")
 
     if file and password and st.button("Protect PDF"):
+        show_progress("Protecting PDF")
+
         reader = PdfReader(file)
         writer = PdfWriter()
 
@@ -399,10 +519,18 @@ elif option == "Password Protect PDF":
 
 elif option == "Unlock PDF":
     st.subheader("Unlock PDF")
-    file = st.file_uploader("Upload protected PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload protected PDF",
+        type=["pdf"],
+        key="unlock_pdf_uploader"
+    )
+
     password = st.text_input("Enter password", type="password")
 
     if file and password and st.button("Unlock PDF"):
+        show_progress("Unlocking PDF")
+
         reader = PdfReader(file)
 
         if reader.is_encrypted:
@@ -429,9 +557,16 @@ elif option == "Unlock PDF":
 
 elif option == "PDF Info":
     st.subheader("PDF Info")
-    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        key="pdf_info_uploader"
+    )
 
     if file and st.button("Show PDF Info"):
+        show_progress("Reading PDF Info")
+
         reader = PdfReader(file)
 
         st.write("Total Pages:", len(reader.pages))
@@ -445,6 +580,7 @@ elif option == "PDF Info":
                 st.write(key, ":", value)
         else:
             st.write("No metadata found")
+
 
 st.markdown('</div>', unsafe_allow_html=True)
 
